@@ -1,0 +1,232 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      commit_artifacts:
+        description: 'Commit artifacts'
+        required: true
+        type: choice
+        options:
+          - "no"
+          - "direct"
+          - "another_branch"
+        default: "no"
+
+jobs:
+  build_win64:
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v3
+      - uses: microsoft/setup-msbuild@v1.3.1
+        with:
+          msbuild-architecture: x64
+          vs-version: '[16.0,17.0)' # VS2019
+      - name: Clone libopus
+        uses: actions/checkout@v3
+        with:
+          repository: xiph/opus
+          path: 'opus'
+          ref: v1.3.1
+      - name: Build libopus
+        working-directory: opus
+        shell: bash
+        run: |
+          mkdir build
+          cd build
+          cmake .. -G "Visual Studio 16 2019" -A x64 -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF -DOPUS_BUILD_PROGRAMS=OFF \
+            -DAVX_SUPPORTED=OFF
+          cmake --build . --config Release
+          cp Release/opus.lib "$GITHUB_WORKSPACE/Plugin/libopus/lib/Release/opus.lib"
+      - name: Build UnityOpus
+        working-directory: Plugin
+        run: |
+          msbuild UnityOpus.vcxproj /t:build /p:Configuration=Release /p:Platform=x64
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: UnityOpus_Win64
+          path: Plugin/x64/Release/UnityOpus.dll
+  build_macos:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v3
+      - run: sudo xcode-select -s /Applications/Xcode_14.3.app 
+      - name: Clone libopus
+        uses: actions/checkout@v3
+        with:
+          repository: xiph/opus
+          path: 'opus'
+          ref: v1.3.1
+      - name: Build libopus
+        working-directory: opus
+        run: |
+          mkdir build
+          cd build
+          cmake .. -G "Xcode" -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF -DOPUS_BUILD_PROGRAMS=OFF \
+            -DMACOSX_DEPLOYMENT_TARGET=10.13 -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+          cmake --build . --config Release
+          cp Release/libopus.a "$GITHUB_WORKSPACE/Plugin/libopus/lib/Release/libopus.a"
+      - name: Build UnityOpus
+        working-directory: Plugin/mac
+        run: |
+          rm -r "$GITHUB_WORKSPACE/Assets/Plugins/UnityOpus/Plugins/Mac/UnityOpus.bundle"
+          xcodebuild -project UnityOpus/UnityOpus.xcodeproj -configuration Release -target UnityOpus
+          cd UnityOpus/build/Release/
+          tar czf UnityOpus.bundle.tar.gz UnityOpus.bundle
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: UnityOpus_macOS
+          path: Plugin/mac/UnityOpus/build/Release/UnityOpus.bundle.tar.gz
+  build_ios:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v3
+      - run: sudo xcode-select -s /Applications/Xcode_14.3.app 
+      - name: Clone libopus
+        uses: actions/checkout@v3
+        with:
+          repository: xiph/opus
+          path: 'opus'
+          ref: v1.3.1
+      - name: Build libopus
+        working-directory: opus
+        run: |
+          mkdir build
+          cd build
+          cmake .. -G "Xcode" -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF -DOPUS_BUILD_PROGRAMS=OFF \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build . --config Release
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: libopus_iOS
+          path: opus/build/Release-iphoneos/libopus.a
+  build_android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Clone libopus
+        uses: actions/checkout@v3
+        with:
+          repository: xiph/opus
+          path: Plugin/libopus/src
+          ref: v1.3.1
+      - name: Download NDK 21
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+          sha1sum -c <(echo "c3ebc83c96a4d7f539bd72c241b2be9dcd29bda9 android-ndk-r21e-linux-x86_64.zip")
+          unzip -qq android-ndk-r21e-linux-x86_64.zip
+      - name: Build UnityOpus
+        working-directory: Plugin/android
+        run: |
+          ./gradlew assembleRelease
+        env:
+          ANDROID_NDK_HOME: ${{ github.workspace }}/android-ndk-r21e
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: UnityOpus_Android
+          path: Plugin/android/unityopus/build/outputs/aar/unityopus-release.aar
+  make_all_zip:
+    runs-on: ubuntu-22.04
+    needs:
+      - build_win64
+      - build_macos
+      - build_ios
+      - build_android
+    steps:
+      - name: Download Win64 artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: UnityOpus_Win64
+          path: dest/x64/
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: UnityOpus_macOS
+          path: dest/Mac/
+      - name: Download iOS artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: libopus_iOS
+          path: dest/iOS/lib/
+      - name: Download Android artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: UnityOpus_Android
+          path: dest/Android/
+      - name: Extract macOS bundle
+        run: |
+          cd dest/Mac
+          tar xzf UnityOpus.bundle.tar.gz
+          rm UnityOpus.bundle.tar.gz
+      - name: Rename Android AAR
+        run: |
+          cd dest/Android
+          mv unityopus-release.aar unityopus.aar
+      - name: Create zip
+        run: cd dest && zip -r ../UnityOpus_Plugins.zip .
+      - name: Write Checksums
+        run: |
+          cd dest
+          echo -e '## Checksums\n```' >> $GITHUB_STEP_SUMMARY
+          find . -type f -exec sha512sum {} \; >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v3
+        with:
+          name: Plugins
+          path: UnityOpus_Plugins.zip
+  commit_artifacts:
+    runs-on: ubuntu-22.04
+    needs:
+      - make_all_zip
+    if: github.event.inputs.commit_artifacts == 'direct' || github.event.inputs.commit_artifacts == 'another_branch'
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with:
+          name: Plugins
+          path: dest/
+      - name: Extract plugins zip
+        run: unzip dest/UnityOpus_Plugins.zip -d dest && rm dest/UnityOpus_Plugins.zip
+      - name: Copy files
+        shell: python
+        run: |
+          import os
+          import glob
+          SRC_DIR = "dest"
+          DEST_DIR = "Assets/Plugins/UnityOpus/Plugins"
+          for f in glob.glob(os.path.join(SRC_DIR, "**", "*"), recursive=True):
+            if not os.path.isfile(f):
+              continue
+            # .meta がないと Unity で開いた時に追加で diff が出るので、.meta がない場合はエラーにする
+            if not os.path.exists(f.replace(SRC_DIR, DEST_DIR)):
+              raise Exception("New file (need to generate .meta): " + f.replace(SRC_DIR, DEST_DIR))
+            os.rename(f, f.replace(SRC_DIR, DEST_DIR))
+      - name: Create new branch
+        if: github.event.inputs.commit_artifacts == 'another_branch'
+        run: |
+          git checkout -b "gha/$(git rev-parse --abbrev-ref HEAD)"
+      - name: Commit
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Assets/Plugins/UnityOpus/Plugins
+          git commit -m "Update binaries"$'\n\n'"Source: $(git rev-parse HEAD)"
+      - name: Push (Force)
+        if: github.event.inputs.commit_artifacts == 'another_branch'
+        run: |
+          git push -f origin "$(git rev-parse --abbrev-ref HEAD)"
+      - name: Push
+        if: github.event.inputs.commit_artifacts == 'direct'
+        run: |
+          git push origin "$(git rev-parse --abbrev-ref HEAD)"
