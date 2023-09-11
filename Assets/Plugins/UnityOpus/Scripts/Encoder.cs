@@ -37,8 +37,7 @@ namespace UnityOpus {
         public Encoder(
             SamplingFrequency samplingFrequency,
             NumChannels channels,
-            OpusApplication application,
-            bool fecEnabled) {
+            OpusApplication application) {
             this.channels = channels;
             ErrorCode error;
             encoder = Library.OpusEncoderCreate(
@@ -50,7 +49,11 @@ namespace UnityOpus {
                 UnityEngine.Debug.LogError("[UnityOpus] Failed to init encoder. Error code: " + error.ToString());
                 encoder = IntPtr.Zero;
             }
+        }
+
+        public void SetEnabledFEC(bool fecEnabled, int packetLossPerc) {
             Library.OpusEncoderSetInbandFec(encoder, fecEnabled);
+            Library.OpusEncoderSetPacketLossPerc(encoder, packetLossPerc);
         }
 
         public int Encode(float[] pcm, byte[] output) {

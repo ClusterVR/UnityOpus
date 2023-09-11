@@ -97,6 +97,11 @@ namespace UnityOpus {
             [MarshalAs(UnmanagedType.I1)] bool fecEnabled);
 
         [DllImport(dllName)]
+        public static extern int OpusEncoderSetPacketLossPerc(
+            IntPtr encoder,
+            int packetLossPerc);
+
+        [DllImport(dllName)]
         public static extern IntPtr OpusDecoderCreate(
             SamplingFrequency samplingFrequency,
             NumChannels channels,
