@@ -90,6 +90,11 @@ namespace UnityOpus {
         public static extern int OpusEncoderSetSignal(
             IntPtr encoder,
             OpusSignal signal);
+        
+        [DllImport(dllName)]
+        public static extern int OpusEncoderSetInbandFec(
+            IntPtr encoder,
+            [MarshalAs(UnmanagedType.I1)] bool fecEnabled);
 
         [DllImport(dllName)]
         public static extern IntPtr OpusDecoderCreate(
